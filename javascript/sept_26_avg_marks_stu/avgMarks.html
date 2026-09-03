@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <script>
+        const students = [
+            { name: "Alice", marks: [80, 90, 85] },
+            { name: "Bob", marks: [70, 75, 72] },
+            { name: "Charlie", marks: [95, 92, 88] }
+        ];
+
+        function generateReport(students) {
+            let finalArr = []
+            students.forEach(student => {
+
+                let total =  student.marks.reduce((total, mark) =>  total += mark, 0)
+                let percentage = (total / 300) * 100
+                
+                const finalPercent = `${student.name} scored ${total}/300 Marks & ${percentage.toFixed(2)}% ]`;
+                finalArr.push(finalPercent)
+            });
+            return finalArr
+        }
+        let rslt = generateReport(students)
+        console.log(rslt)
+
+
+    </script>
+</body>
+
+</html>

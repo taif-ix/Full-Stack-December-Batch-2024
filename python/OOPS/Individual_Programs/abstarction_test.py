@@ -11,7 +11,7 @@ class Department(ABC):
     @abstractmethod
     def team_size(self):
         pass
-
+ 
 class HR(Department):
     def __init__(self):
         super().__init__()

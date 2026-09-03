@@ -12,8 +12,8 @@ class Mobile(ABC):
 
     @abstractmethod    
     def bluetooth(self):
-        pass
-
+        pass 
+ 
     @abstractmethod
     def hotspot(self):
         pass

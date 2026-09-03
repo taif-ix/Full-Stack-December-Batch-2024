@@ -9,4 +9,4 @@ class Person:
 
 
 ask_username = input("Enter name: ")
-person1 = Person(ask_username)
+person1 = Person(ask_username) 

@@ -1,0 +1,139 @@
+name: Indixpert Wellness hOSPITAL MGT DASHBOARD API DEV (reusable CICD)
+
+on:
+  workflow_call:
+    inputs:
+      target_branch:
+        description: 'Branch to checkout and build (e.g. dev)'
+        required: true
+        type: string
+      image_tag:
+        description: 'Optional explicit image tag (if empty, uses head_sha or GITHUB_SHA)'
+        required: false
+        type: string
+      head_sha:
+        description: 'SHA of the commit to build (passed by caller as github.sha)'
+        required: false
+        type: string
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+      APP_RUNNER_DEV_ARN:
+        required: true
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPO: indixpert/int-wellnest-hospital-mgt-dashboard-api
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout target branch (app code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+
+      - name: Checkout main branch (to fetch Dockerfile)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: dockerfile-main
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure Dockerfile present and Build & Push image
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_REPO: ${{ env.ECR_REPO }}
+        run: |
+          set -euo pipefail
+
+          echo "Workspace root: $PWD"
+          echo "Contents of workspace root (dev code):"
+          ls -la
+
+          echo "Contents of dockerfile-main (main branch checkout):"
+          ls -la dockerfile-main || true
+
+          # Try common Dockerfile names (case-insensitive common variants)
+          FOUND=""
+          for NAME in Dockerfile DockerFile dockerfile DockerFILE; do
+            if [ -f "dockerfile-main/${NAME}" ]; then
+              FOUND="dockerfile-main/${NAME}"
+              break
+            fi
+          done
+
+          if [ -n "$FOUND" ]; then
+            echo "Found Dockerfile at: $FOUND"
+            cp "$FOUND" Dockerfile
+            echo "Copied $FOUND -> ./Dockerfile"
+          else
+            echo "ERROR: No Dockerfile found in dockerfile-main (checked common names)." >&2
+            echo "Listing dockerfile-main for debugging:"
+            ls -la dockerfile-main || true
+            echo "Listing repo root for debugging:"
+            ls -la
+            exit 1
+          fi
+
+          # Determine image tag priority: explicit input -> head_sha -> GITHUB_SHA
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          elif [ -n "${{ inputs.head_sha }}" ]; then
+            SHORT=$(echo "${{ inputs.head_sha }}" | cut -c1-7)
+            TAG="dev-${SHORT}"
+          else
+            SHORT="${GITHUB_SHA:0:7}"
+            TAG="dev-${SHORT}"
+          fi
+
+          # Final safety: ensure TAG non-empty
+          if [ -z "${TAG}" ]; then
+            echo "ERROR: computed IMAGE TAG is empty" >&2
+            exit 1
+          fi
+
+          export IMAGE_TAG="${TAG}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+          IMAGE_WITH_TAG="${ECR}:${IMAGE_TAG}"
+
+          echo "Building image ${IMAGE_WITH_TAG}"
+          docker build -t "${IMAGE_WITH_TAG}" .
+          echo "Pushing image ${IMAGE_WITH_TAG}"
+          docker push "${IMAGE_WITH_TAG}"
+
+          echo "IMAGE_URI=${IMAGE_WITH_TAG}" >> "$GITHUB_ENV"
+          echo "Built and pushed ${IMAGE_WITH_TAG}"
+
+      - name: Deploy to App Runner (DEV)
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${IMAGE_URI:-}" ]; then
+            echo "ERROR: IMAGE_URI is empty. Build step failed to set it." >&2
+            exit 1
+          fi
+
+          echo "Updating App Runner service with image ${IMAGE_URI}"
+          aws apprunner update-service \
+            --service-arn "${{ secrets.APP_RUNNER_DEV_ARN }}" \
+            --source-configuration "{\"ImageRepository\":{\"ImageIdentifier\":\"${IMAGE_URI}\",\"ImageRepositoryType\":\"ECR\",\"ImageConfiguration\":{\"Port\":\"8000\"}}}"
+          echo "Update-service called; App Runner will deploy the new image."
